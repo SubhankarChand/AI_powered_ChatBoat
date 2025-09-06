@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Coding Helper</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar for Chat History -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <button id="new-chat-btn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14m-7-7h14" stroke-width="2" stroke-linecap="round"></path></svg>
+                    New Chat
+                </button>
+            </div>
+            <nav id="chat-history" class="chat-history-nav">
+                <p>Recent</p>
+                <ul></ul>
+            </nav>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <div id="chat-window">
+                <div id="chat-log">
+                    <div class="welcome-message">
+                        <div class="logo">AI</div>
+                        <h2>How can I help you today?</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="prompt-container">
+                <div class="mode-selector-container">
+                    <select id="mode-selector">
+                        <option value="assistant">🤖 AI Assistant</option>
+                        <option value="debugger">🐞 Code Debugger</option>
+                        <option value="analyzer">⏱️ Complexity Analyzer</option>
+                        <option value="generator">💡 Project Idea Generator</option>
+                    </select>
+                </div>
+                <form id="prompt-form">
+                    <textarea id="prompt-input" name="prompt" placeholder="Ask me a coding question..." required></textarea>
+                    <button id="submit-btn" type="submit" title="Send">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // DOM Elements
+        const form = document.getElementById('prompt-form');
+        const input = document.getElementById('prompt-input');
+        const chatLog = document.getElementById('chat-log');
+        const chatHistoryUl = document.querySelector('#chat-history ul');
+        const newChatBtn = document.getElementById('new-chat-btn');
+        const submitBtn = document.getElementById('submit-btn');
+        const modeSelector = document.getElementById('mode-selector');
+
+        let currentChatId = null;
+
+        const PLACEHOLDERS = {
+            "assistant": "Ask me a coding question...",
+            "debugger": "Paste your broken code here to get a fix and explanation...",
+            "analyzer": "Paste a code snippet to analyze its Big O complexity...",
+            "generator": "List some topics or languages you know (e.g., Python, APIs, loops)..."
+        };
+
+        // --- Event Listeners ---
+        document.addEventListener('DOMContentLoaded', loadSidebar);
+        newChatBtn.addEventListener('click', startNewChat);
+        form.addEventListener('submit', handleFormSubmit);
+        modeSelector.addEventListener('change', () => { input.placeholder = PLACEHOLDERS[modeSelector.value]; });
+
+        // --- Core Functions ---
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            const userPrompt = input.value.trim();
+            if (!userPrompt) return;
+
+            const selectedMode = modeSelector.value;
+
+            if (!currentChatId) {
+                currentChatId = `chat_${Date.now()}`;
+                const title = userPrompt.substring(0, 30) + (userPrompt.length > 30 ? '...' : '');
+                saveChat({ id: currentChatId, title: title, messages: [] });
+                loadSidebar();
+            }
+            
+            const welcomeMessage = chatLog.querySelector('.welcome-message');
+            if(welcomeMessage) welcomeMessage.remove();
+
+            // 1. Display the user's own message immediately
+            addMessageToLog('user', userPrompt);
+            saveMessageToHistory('user', userPrompt);
+            input.value = '';
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `<div class="spinner-small"></div>`;
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: userPrompt, mode: selectedMode })
+                });
+                if (!response.ok) throw new Error(await response.text());
+
+                const data = await response.json();
+                addMessageToLog('bot', data.generated_text);
+                saveMessageToHistory('bot', data.generated_text);
+
+            } catch (error) {
+                addMessageToLog('bot', `An error occurred: ${error.message}`, true);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
+            }
+        }
+        
+        function startNewChat() {
+            currentChatId = null;
+            chatLog.innerHTML = `<div class="welcome-message"><div class="logo">AI</div><h2>How can I help you today?</h2></div>`;
+            document.querySelector('.chat-history-nav li.active')?.classList.remove('active');
+        }
+
+        function addMessageToLog(sender, text, isError = false) {
+            const turnContainer = document.createElement('div');
+            turnContainer.className = `turn-container ${sender}-turn`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+            avatar.textContent = sender === 'user' ? 'You' : 'AI';
+
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            
+            const messageText = document.createElement('div');
+            messageText.className = `message ${sender}-message`;
+            if (isError) messageText.classList.add('error-message');
+            messageText.innerHTML = marked.parse(text);
+
+            messageContent.appendChild(messageText);
+
+            // 2. Add action buttons only to bot messages
+            if (sender === 'bot') {
+                const actions = document.createElement('div');
+                actions.className = 'message-actions';
+                actions.innerHTML = `
+                    <button class="action-btn" title="Good response"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M7 21H3V9h4v12M21 9h-4.34l1.12-5.26A2 2 0 0 0 16 2L9 9v10h9.34a2 2 0 0 0 1.95-1.57l1.66-7.43A2 2 0 0 0 21 9Z"></path></svg></button>
+                    <button class="action-btn" title="Bad response"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M17 3h4v12h-4V3M3 15h4.34l-1.12 5.26A2 2 0 0 0 8 22l7-7V5H5.66A2 2 0 0 0 3.7 6.57L2.05 14A2 2 0 0 0 3 15Z"></path></svg></button>
+                    <button class="action-btn" title="Share"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81c1.66 0 3-1.34 3-3s-1.34-3-3-3s-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65c0 1.66 1.34 3 3 3s3-1.34 3-3s-1.34-3-3-3Z"></path></svg></button>
+                `;
+                messageContent.appendChild(actions);
+            }
+
+            turnContainer.appendChild(avatar);
+            turnContainer.appendChild(messageContent);
+            chatLog.appendChild(turnContainer);
+
+            // Apply syntax highlighting
+            messageContent.querySelectorAll('pre code').forEach(block => {
+                hljs.highlightElement(block);
+                addCopyButton(block);
+            });
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        // --- All other JavaScript functions (loadSidebar, loadChat, etc.) remain the same ---
+        function loadSidebar() {
+            const chats = getAllChats();
+            chatHistoryUl.innerHTML = '';
+            for (const id in chats) {
+                const chat = chats[id];
+                const li = document.createElement('li');
+                li.dataset.id = chat.id;
+                li.textContent = chat.title;
+                if (chat.id === currentChatId) li.classList.add('active');
+                li.addEventListener('click', () => loadChat(chat.id));
+                chatHistoryUl.prepend(li);
+            }
+        }
+
+        function loadChat(chatId) {
+            const chats = getAllChats();
+            const chat = chats[chatId];
+            if (!chat) return;
+            currentChatId = chatId;
+            chatLog.innerHTML = '';
+            chat.messages.forEach(msg => addMessageToLog(msg.sender, msg.text));
+            document.querySelector('.chat-history-nav li.active')?.classList.remove('active');
+            document.querySelector(`.chat-history-nav li[data-id="${chatId}"]`).classList.add('active');
+        }
+
+        function getAllChats() { return JSON.parse(localStorage.getItem('chatHistory') || '{}'); }
+        function saveChat(chatData) { const chats = getAllChats(); chats[chatData.id] = chatData; localStorage.setItem('chatHistory', JSON.stringify(chats)); }
+        function saveMessageToHistory(sender, text) { if (!currentChatId) return; const chats = getAllChats(); if (chats[currentChatId]) { chats[currentChatId].messages.push({ sender, text }); localStorage.setItem('chatHistory', JSON.stringify(chats)); } }
+
+        function addCopyButton(codeBlock) {
+             const pre = codeBlock.parentElement;
+             if (pre.querySelector('.copy-btn')) return;
+             const copyButton = document.createElement('button');
+             copyButton.className = 'copy-btn';
+             copyButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg> Copy`;
+             pre.appendChild(copyButton);
+             copyButton.addEventListener('click', () => {
+                 navigator.clipboard.writeText(codeBlock.innerText).then(() => {
+                     copyButton.innerHTML = `Copied!`;
+                     setTimeout(() => { copyButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg> Copy`; }, 2000);
+                 });
+             });
+        }
+    </script>
+</body>
+</html>
+
